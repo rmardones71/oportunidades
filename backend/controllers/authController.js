@@ -11,7 +11,7 @@ async function getUserByUsernameOrEmail(login) {
   const result = await query(
     `
     SELECT TOP 1
-      u.UserId, u.Username, u.Email, u.PasswordHash, u.IsActive, u.TwoFactorEnabled,
+      u.UserId, u.Username, u.Email, u.FirstName, u.LastName, u.PasswordHash, u.IsActive, u.TwoFactorEnabled,
       u.TwoFactorCode, u.TwoFactorExpires, u.TempPassword, u.FailedAttempts, u.LockoutUntil,
       u.RoleId, r.RoleName
     FROM dbo.Users u
@@ -101,11 +101,19 @@ async function login(req, res) {
       { code, expires, userId: user.UserId },
     )
 
-    await sendMail({
+    const mailResult = await sendMail({
       to: user.Email,
       subject: 'Código de verificación (2FA)',
       text: `Tu código es: ${code}. Expira en ${env.security.twoFactorMinutes} minutos.`,
     })
+
+    if (mailResult?.skipped) {
+      if (env.nodeEnv === 'production') {
+        return res.status(500).json({ message: 'SMTP no configurado; no se puede enviar el código 2FA' })
+      }
+      // eslint-disable-next-line no-console
+      console.warn(`[2FA] SMTP not configured. Code for ${user.Email}: ${code}`)
+    }
 
     await auditLog({ userId: user.UserId, actionType: '2FA_SENT', description: '2FA code sent', ipAddress })
     return res.json({ requires2fa: true, userId: user.UserId })
@@ -138,6 +146,8 @@ async function login(req, res) {
       userId: user.UserId,
       username: user.Username,
       email: user.Email,
+      firstName: user.FirstName,
+      lastName: user.LastName,
       role: user.RoleName,
       tempPassword: !!user.TempPassword,
       twoFactorEnabled: !!user.TwoFactorEnabled,
@@ -154,7 +164,7 @@ async function verify2fa(req, res) {
 
   const result = await query(
     `
-    SELECT TOP 1 u.UserId, u.Username, u.Email, u.TempPassword, u.TwoFactorCode, u.TwoFactorExpires, u.RoleId, r.RoleName
+    SELECT TOP 1 u.UserId, u.Username, u.Email, u.FirstName, u.LastName, u.TempPassword, u.TwoFactorCode, u.TwoFactorExpires, u.RoleId, r.RoleName
     FROM dbo.Users u
     INNER JOIN dbo.Roles r ON r.RoleId = u.RoleId
     WHERE u.UserId = @userId
@@ -201,6 +211,8 @@ async function verify2fa(req, res) {
       userId: user.UserId,
       username: user.Username,
       email: user.Email,
+      firstName: user.FirstName,
+      lastName: user.LastName,
       role: user.RoleName,
       tempPassword: !!user.TempPassword,
       twoFactorEnabled: true,
@@ -239,11 +251,16 @@ async function forgotPassword(req, res) {
     { hash, userId: user.UserId },
   )
 
-  await sendMail({
+  const mailResult = await sendMail({
     to: user.Email,
     subject: 'Recuperación de contraseña',
     text: `Tu contraseña temporal es: ${tempPasswordPlain}. Debes cambiarla al iniciar sesión.`,
   })
+
+  if (mailResult?.skipped) {
+    // eslint-disable-next-line no-console
+    console.warn(`[MAIL] SMTP not configured. Forgot-password temp for ${user.Email}: ${tempPasswordPlain}`)
+  }
 
   await auditLog({ userId: user.UserId, actionType: 'FORGOT_PASSWORD', description: 'Temporary password sent', ipAddress })
   return res.json({ message: 'If the email exists, a temporary password was sent.' })

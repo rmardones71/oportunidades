@@ -1,14 +1,39 @@
 import React, { useMemo, useState, useEffect } from 'react'
-import { CButton, CCard, CCardBody, CCardHeader, CFormInput, CTable, CTableBody, CTableDataCell, CTableHead, CTableHeaderCell, CTableRow } from '@coreui/react'
+import {
+  CButton,
+  CCard,
+  CCardBody,
+  CCardHeader,
+  CTable,
+  CTableBody,
+  CTableDataCell,
+  CTableHead,
+  CTableHeaderCell,
+  CTableRow,
+} from '@coreui/react'
+import CIcon from '@coreui/icons-react'
+import { cilCloudDownload, cilPencil, cilPlus, cilShieldAlt } from '@coreui/icons'
 import api from 'src/services/api'
 import { useToast } from 'src/components/ToastProvider'
 import GridColumnPicker from 'src/components/GridColumnPicker'
+import RoleFormModal from './RoleFormModal'
+import { buildDateRangeParams, exportToPdf, exportToXlsx, isPrivilegedRole } from 'src/utils/export'
+import { useSelector } from 'react-redux'
+import ExportModal from 'src/components/ExportModal'
+import GridPaginationBar from 'src/components/GridPaginationBar'
 
 const RolesManagement = () => {
   const toast = useToast()
   const columnsStorageKey = 'crm_roles_grid_columns_v1'
   const [roles, setRoles] = useState([])
-  const [roleName, setRoleName] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportFormat, setExportFormat] = useState('xlsx')
+  const [editing, setEditing] = useState(null)
   const [visibleColumns, setVisibleColumns] = useState(() => {
     try {
       const raw = localStorage.getItem(columnsStorageKey)
@@ -21,18 +46,35 @@ const RolesManagement = () => {
       roleName: true,
       isActive: true,
       createdAt: false,
+      actions: true,
     }
   })
 
-  const columns = useMemo(
-    () => [
+  const role = useSelector((s) => s.auth.user?.role)
+  const canExport = isPrivilegedRole(role)
+  const canManageRoles = role === 'Super Admin'
+
+  const total = roles.length
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize])
+  const pagedRoles = useMemo(() => {
+    const offset = (page - 1) * pageSize
+    return roles.slice(offset, offset + pageSize)
+  }, [roles, page, pageSize])
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
+  const columns = useMemo(() => {
+    const cols = [
       { key: 'roleId', label: 'ID' },
       { key: 'roleName', label: 'Nombre' },
       { key: 'isActive', label: 'Activo' },
       { key: 'createdAt', label: 'Creado' },
-    ],
-    [],
-  )
+    ]
+    if (canManageRoles) cols.push({ key: 'actions', label: 'Acciones' })
+    return cols
+  }, [canManageRoles])
 
   const load = async () => {
     const res = await api.get('/api/roles')
@@ -43,52 +85,150 @@ const RolesManagement = () => {
     load().catch(() => {})
   }, [])
 
-  const create = async () => {
+  const openCreate = () => {
+    setEditing(null)
+    setModalOpen(true)
+  }
+
+  const openEdit = (row) => {
+    setEditing({
+      roleId: row.RoleId,
+      roleName: row.RoleName,
+      isActive: row.IsActive,
+    })
+    setModalOpen(true)
+  }
+
+  const submitModal = async (values) => {
+    const name = String(values?.roleName || '').trim()
+    if (!name) return
+
+    setSaving(true)
     try {
-      await api.post('/api/roles', { roleName })
-      setRoleName('')
-      toast.success('Rol creado')
+      if (editing?.roleId) {
+        await api.put(`/api/roles/${editing.roleId}`, { roleName: name, isActive: !!values?.isActive })
+        toast.success('Rol actualizado')
+      } else {
+        await api.post('/api/roles', { roleName: name, isActive: !!values?.isActive })
+        toast.success('Rol creado')
+      }
+      setModalOpen(false)
+      setEditing(null)
       await load()
     } catch (e) {
       const data = e.response?.data
       if (data?.code === 'DUPLICATE') {
         toast.error(data.message || 'Rol duplicado')
       } else {
-        toast.error(data?.message || 'No se pudo crear rol')
+        toast.error(data?.message || 'No se pudo guardar rol')
       }
+    } finally {
+      setSaving(false)
     }
   }
 
+  const exportExcel = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    setExporting(true)
+    try {
+      const dateParams = allRecords ? {} : buildDateRangeParams({ dateFrom: dateFromOverride, dateTo: dateToOverride })
+      const res = await api.get('/api/roles', { params: { ...dateParams } })
+      const all = res.data || []
+      const rows = all.map((r) => ({
+        ID: r.RoleId,
+        Nombre: r.RoleName,
+        Activo: r.IsActive ? 'Si' : 'No',
+        Creado: r.CreatedAt ? new Date(r.CreatedAt).toLocaleString() : '',
+      }))
+      const dateTag = new Date().toISOString().slice(0, 10)
+      await exportToXlsx({ fileName: `roles_${dateTag}.xlsx`, sheetName: 'Roles', rows })
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const exportPdf = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    setExporting(true)
+    try {
+      const dateParams = allRecords ? {} : buildDateRangeParams({ dateFrom: dateFromOverride, dateTo: dateToOverride })
+      const res = await api.get('/api/roles', { params: { ...dateParams } })
+      const all = res.data || []
+      const head = ['ID', 'Nombre', 'Activo', 'Creado']
+      const body = all.map((r) => [
+        String(r.RoleId ?? ''),
+        r.RoleName || '',
+        r.IsActive ? 'Si' : 'No',
+        r.CreatedAt ? new Date(r.CreatedAt).toLocaleString() : '',
+      ])
+      const dateTag = new Date().toISOString().slice(0, 10)
+      await exportToPdf({ fileName: `roles_${dateTag}.pdf`, title: 'Roles', head, body })
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const openExport = (format) => {
+    if (!canExport) return
+    setExportFormat(format)
+    setExportModalOpen(true)
+  }
+
+  const confirmExport = async ({ allRecords, dateFrom, dateTo, format }) => {
+    if (format === 'pdf') {
+      await exportPdf({ allRecords, dateFromOverride: dateFrom, dateToOverride: dateTo })
+    } else {
+      await exportExcel({ allRecords, dateFromOverride: dateFrom, dateToOverride: dateTo })
+    }
+    setExportModalOpen(false)
+  }
+
   return (
-    <CCard>
-      <CCardHeader className="d-flex justify-content-between align-items-center">
-        <div>Roles</div>
-        <GridColumnPicker
-          storageKey={columnsStorageKey}
-          columns={columns}
-          value={visibleColumns}
-          onChange={setVisibleColumns}
-        />
+      <CCard>
+        <CCardHeader className="d-flex justify-content-between align-items-center">
+          <div className="d-flex align-items-center">
+            <CIcon icon={cilShieldAlt} className="me-2" />
+            <span>Roles</span>
+          </div>
+          <div className="d-flex gap-2">
+          {canExport && (
+            <>
+              <CButton color="secondary" variant="outline" onClick={() => openExport('xlsx')} disabled={exporting}>
+                <CIcon icon={cilCloudDownload} className="me-1" /> Excel
+              </CButton>
+              <CButton color="secondary" variant="outline" onClick={() => openExport('pdf')} disabled={exporting}>
+                <CIcon icon={cilCloudDownload} className="me-1" /> PDF
+              </CButton>
+            </>
+          )}
+          {canManageRoles && (
+            <CButton color="primary" onClick={openCreate} disabled={saving}>
+              <CIcon icon={cilPlus} className="me-1" /> Nuevo rol
+            </CButton>
+          )}
+          <GridColumnPicker
+            storageKey={columnsStorageKey}
+            columns={columns}
+            value={visibleColumns}
+            onChange={setVisibleColumns}
+          />
+        </div>
       </CCardHeader>
       <CCardBody>
-        <div className="d-flex gap-2 mb-3">
-          <CFormInput placeholder="Nuevo rol" value={roleName} onChange={(e) => setRoleName(e.target.value)} />
-          <CButton color="primary" onClick={create} disabled={!roleName.trim()}>
-            Crear
-          </CButton>
-        </div>
         <div className="macos-grid">
           <CTable hover>
             <CTableHead>
               <CTableRow>
                 {columns.map((c) => {
-                  if (!visibleColumns[c.key]) return null
+                  if (c.key !== 'actions' && !visibleColumns[c.key]) return null
                   return <CTableHeaderCell key={c.key}>{c.label}</CTableHeaderCell>
                 })}
               </CTableRow>
             </CTableHead>
             <CTableBody>
-              {roles.map((r) => (
+              {pagedRoles.map((r) => (
                 <CTableRow key={r.RoleId}>
                   {visibleColumns.roleId && <CTableDataCell>{r.RoleId}</CTableDataCell>}
                   {visibleColumns.roleName && <CTableDataCell>{r.RoleName}</CTableDataCell>}
@@ -96,9 +236,16 @@ const RolesManagement = () => {
                   {visibleColumns.createdAt && (
                     <CTableDataCell>{r.CreatedAt ? new Date(r.CreatedAt).toLocaleDateString() : '-'}</CTableDataCell>
                   )}
+                  {canManageRoles && (
+                    <CTableDataCell className="d-flex gap-2 actions-cell">
+                      <CButton size="sm" color="secondary" variant="outline" onClick={() => openEdit(r)}>
+                        <CIcon icon={cilPencil} className="me-1" /> Editar
+                      </CButton>
+                    </CTableDataCell>
+                  )}
                 </CTableRow>
               ))}
-              {roles.length === 0 && (
+              {pagedRoles.length === 0 && (
                 <CTableRow>
                   <CTableDataCell colSpan={columns.length} className="text-center text-body-secondary">
                     Sin resultados
@@ -108,6 +255,37 @@ const RolesManagement = () => {
             </CTableBody>
           </CTable>
         </div>
+
+        <GridPaginationBar
+          total={total}
+          page={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(next) => {
+            setPageSize(Number(next))
+            setPage(1)
+          }}
+        />
+
+        <RoleFormModal
+          visible={modalOpen}
+          onClose={() => {
+            setModalOpen(false)
+            setEditing(null)
+          }}
+          onSubmit={submitModal}
+          submitting={saving}
+          initialValues={editing}
+        />
+
+        <ExportModal
+          visible={exportModalOpen}
+          onClose={() => setExportModalOpen(false)}
+          onConfirm={confirmExport}
+          submitting={exporting}
+          format={exportFormat}
+        />
       </CCardBody>
     </CCard>
   )

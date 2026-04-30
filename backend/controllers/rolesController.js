@@ -3,8 +3,24 @@ const { query } = require('../database/db')
 const { auditLog } = require('../services/auditService')
 
 async function listRoles(req, res) {
+  const dateFrom = req.query.dateFrom ? new Date(String(req.query.dateFrom)) : null
+  const dateTo = req.query.dateTo ? new Date(String(req.query.dateTo)) : null
+
+  const where = []
+  const params = {}
+  if (dateFrom && !Number.isNaN(dateFrom.getTime())) {
+    where.push(`CreatedAt >= @dateFrom`)
+    params.dateFrom = dateFrom
+  }
+  if (dateTo && !Number.isNaN(dateTo.getTime())) {
+    where.push(`CreatedAt <= @dateTo`)
+    params.dateTo = dateTo
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+
   const result = await query(
-    `SELECT RoleId, RoleName, [Description], IsActive, CreatedAt, UpdatedAt FROM dbo.Roles ORDER BY RoleId ASC`,
+    `SELECT RoleId, RoleName, [Description], IsActive, CreatedAt, UpdatedAt FROM dbo.Roles ${whereSql} ORDER BY RoleId ASC`,
+    params,
   )
   return res.json(result.recordset)
 }
@@ -50,4 +66,3 @@ async function deleteRole(req, res) {
 }
 
 module.exports = { listRoles, createRole, updateRole, deleteRole }
-

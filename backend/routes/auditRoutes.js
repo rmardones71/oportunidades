@@ -6,7 +6,7 @@ const { asyncHandler } = require('../utils/asyncHandler')
 
 const router = express.Router()
 
-router.get('/', authRequired, requireRoles('Super Admin'), asyncHandler(controller.listAuditLogs))
-router.get('/action-types', authRequired, requireRoles('Super Admin'), asyncHandler(controller.listActionTypes))
+router.get('/', authRequired, requireRoles('Super Admin', 'Admin'), asyncHandler(controller.listAuditLogs))
+router.get('/action-types', authRequired, requireRoles('Super Admin', 'Admin'), asyncHandler(controller.listActionTypes))
 
 module.exports = { auditRoutes: router }

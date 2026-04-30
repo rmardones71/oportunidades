@@ -16,12 +16,11 @@ async function sendMail({ to, subject, text }) {
   if (!transport) {
     // In dev environments without SMTP, we avoid failing authentication flows.
     // Caller should still log/audit.
-    return { skipped: true }
+    return { skipped: true, reason: 'SMTP not configured (missing SMTP_HOST)' }
   }
   const from = env.smtp.from || env.smtp.user
   await transport.sendMail({ from, to, subject, text })
-  return { skipped: false }
+  return { skipped: false, reason: null }
 }
 
 module.exports = { sendMail }
-

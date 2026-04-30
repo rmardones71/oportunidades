@@ -5,9 +5,10 @@
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js",
-    "seed": "node seed/seed-admin.js"
+    "dev": "node --disable-warning=DEP0169 server.js",
+    "start": "node --disable-warning=DEP0169 server.js",
+    "seed": "node --disable-warning=DEP0169 seed/seed-admin.js",
+    "test:smtp": "node --disable-warning=DEP0169 scripts/test-smtp.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

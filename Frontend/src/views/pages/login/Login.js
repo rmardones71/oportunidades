@@ -22,6 +22,7 @@ import * as yup from 'yup'
 import { setSession } from 'src/store/authSlice'
 import { login as loginApi } from 'src/services/authService'
 import { useToast } from 'src/components/ToastProvider'
+import ucmLogo from 'src/assets/images/brand/logo-ucm.png'
 
 const Login = () => {
   const dispatch = useDispatch()
@@ -63,12 +64,18 @@ const Login = () => {
   }
 
   return (
-    <div className="bg-body-tertiary min-vh-100 d-flex flex-row align-items-center">
+    <div
+      className="min-vh-100 d-flex flex-row align-items-center"
+      style={{
+        background:
+          'radial-gradient(1200px circle at 20% 10%, rgba(255,255,255,0.12), transparent 55%), linear-gradient(135deg, #0b2a4a 0%, #0d4a7c 45%, #0a2a4a 100%)',
+      }}
+    >
       <CContainer>
         <CRow className="justify-content-center">
           <CCol md={8}>
             <CCardGroup>
-              <CCard className="p-4">
+              <CCard className="p-4 shadow-lg border-0" style={{ borderRadius: 14 }}>
                 <CCardBody>
                   <CForm onSubmit={handleSubmit(onSubmit)}>
                     <h1>Acceso</h1>
@@ -113,13 +120,25 @@ const Login = () => {
                   </CForm>
                 </CCardBody>
               </CCard>
-              <CCard className="text-white bg-primary py-5" style={{ width: '44%' }}>
+              <CCard className="text-white bg-primary py-5 shadow-lg border-0" style={{ width: '44%', borderRadius: 14 }}>
                 <CCardBody className="text-center">
                   <div>
-                    <h2>Acceso empresarial</h2>
-                    <p>
-                      Seguridad robusta con JWT, Refresh Token y 2FA opcional por correo.
-                    </p>
+                    <div
+                      className="rounded-3 p-3 d-inline-flex align-items-center justify-content-center mb-3"
+                      style={{
+                        background: 'linear-gradient(135deg, #fffaf0 0%, #ffffff 48%, #f3efe4 100%)',
+                        border: '1px solid rgba(214, 184, 112, 0.45)',
+                        boxShadow: '0 18px 38px rgba(2, 20, 45, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.95)',
+                        maxWidth: '92%',
+                      }}
+                    >
+                      <img
+                        src={ucmLogo}
+                        alt="UCM - Unidad Coronaria Móvil"
+                        style={{ maxWidth: 320, width: '100%', height: 'auto' }}
+                      />
+                    </div>
+                    <p>Seguridad robusta con JWT, Refresh Token y 2FA opcional por correo.</p>
                     <Link to="/register">
                       <CButton color="primary" className="mt-3" active tabIndex={-1}>
                         Register Now!

@@ -15,9 +15,15 @@ import {
   CTableHeaderCell,
   CTableRow,
 } from '@coreui/react'
+import CIcon from '@coreui/icons-react'
+import { cilCloudDownload, cilNotes } from '@coreui/icons'
 import api from 'src/services/api'
 import { useToast } from 'src/components/ToastProvider'
 import GridColumnPicker from 'src/components/GridColumnPicker'
+import { buildDateRangeParams, exportToPdf, exportToXlsx, isPrivilegedRole } from 'src/utils/export'
+import { useSelector } from 'react-redux'
+import ExportModal from 'src/components/ExportModal'
+import GridPaginationBar from 'src/components/GridPaginationBar'
 
 const AuditLogsManagement = () => {
   const toast = useToast()
@@ -30,6 +36,9 @@ const AuditLogsManagement = () => {
   const [actionType, setActionType] = useState('')
   const [actionTypes, setActionTypes] = useState([])
   const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportFormat, setExportFormat] = useState('xlsx')
   const [visibleColumns, setVisibleColumns] = useState(() => {
     try {
       const raw = localStorage.getItem(columnsStorageKey)
@@ -68,11 +77,18 @@ const AuditLogsManagement = () => {
     setActionTypes(res.data)
   }
 
-  const load = async ({ resetPage = false } = {}) => {
+  const load = async ({ resetPage = false, qOverride, actionTypeOverride, pageOverride } = {}) => {
     if (resetPage) setPage(1)
     setLoading(true)
     try {
-      const res = await api.get('/api/audit', { params: { page: resetPage ? 1 : page, pageSize, q, actionType } })
+      const res = await api.get('/api/audit', {
+        params: {
+          page: pageOverride ?? (resetPage ? 1 : page),
+          pageSize,
+          q: qOverride ?? q,
+          actionType: actionTypeOverride ?? actionType,
+        },
+      })
       setItems(res.data.items)
       setTotal(res.data.total)
     } catch (e) {
@@ -80,6 +96,87 @@ const AuditLogsManagement = () => {
     } finally {
       setLoading(false)
     }
+  }
+
+  const role = useSelector((s) => s.auth.user?.role)
+  const canExport = isPrivilegedRole(role)
+
+  const fetchAll = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    const pageSizeAll = 100
+    const dateParams = allRecords
+      ? {}
+      : buildDateRangeParams({ dateFrom: dateFromOverride, dateTo: dateToOverride })
+    const all = []
+    let pageAll = 1
+    while (true) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await api.get('/api/audit', {
+        params: { page: pageAll, pageSize: pageSizeAll, q, actionType, ...dateParams },
+      })
+      const batch = res.data.items || []
+      all.push(...batch)
+      if (all.length >= Number(res.data.total || 0) || batch.length < pageSizeAll) break
+      pageAll += 1
+    }
+    return all
+  }
+
+  const exportExcel = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    setExporting(true)
+    try {
+      const all = await fetchAll({ allRecords, dateFromOverride, dateToOverride })
+      const rows = all.map((a) => ({
+        ID: a.AuditId,
+        Fecha: a.CreatedAt ? new Date(a.CreatedAt).toLocaleString() : '',
+        Accion: a.ActionType,
+        Usuario: a.Username || '',
+        Email: a.Email || '',
+        IP: a.IPAddress || '',
+        Detalle: a.Description || '',
+      }))
+      const dateTag = new Date().toISOString().slice(0, 10)
+      await exportToXlsx({ fileName: `auditoria_${dateTag}.xlsx`, sheetName: 'Auditoria', rows })
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const exportPdf = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    setExporting(true)
+    try {
+      const all = await fetchAll({ allRecords, dateFromOverride, dateToOverride })
+      const head = ['Fecha', 'Acción', 'Usuario', 'IP', 'Detalle']
+      const body = all.map((a) => [
+        a.CreatedAt ? new Date(a.CreatedAt).toLocaleString() : '',
+        a.ActionType || '',
+        a.Username || '-',
+        a.IPAddress || '-',
+        (a.Description || '').slice(0, 120),
+      ])
+      const dateTag = new Date().toISOString().slice(0, 10)
+      await exportToPdf({ fileName: `auditoria_${dateTag}.pdf`, title: 'Auditoría', head, body })
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const openExport = (format) => {
+    if (!canExport) return
+    setExportFormat(format)
+    setExportModalOpen(true)
+  }
+
+  const confirmExport = async ({ allRecords, dateFrom, dateTo, format }) => {
+    if (format === 'pdf') {
+      await exportPdf({ allRecords, dateFromOverride: dateFrom, dateToOverride: dateTo })
+    } else {
+      await exportExcel({ allRecords, dateFromOverride: dateFrom, dateToOverride: dateTo })
+    }
+    setExportModalOpen(false)
   }
 
   useEffect(() => {
@@ -92,26 +189,41 @@ const AuditLogsManagement = () => {
   }, [page, pageSize])
 
   return (
-    <CCard>
-      <CCardHeader className="d-flex justify-content-between align-items-center">
-        <div>Auditoría</div>
-        <GridColumnPicker
-          storageKey={columnsStorageKey}
-          columns={columns}
-          value={visibleColumns}
-          onChange={setVisibleColumns}
-        />
+      <CCard>
+        <CCardHeader className="d-flex justify-content-between align-items-center">
+          <div className="d-flex align-items-center">
+            <CIcon icon={cilNotes} className="me-2" />
+            <span>Auditoría</span>
+          </div>
+          <div className="d-flex gap-2">
+          {canExport && (
+            <>
+              <CButton color="secondary" variant="outline" onClick={() => openExport('xlsx')} disabled={exporting || loading}>
+                <CIcon icon={cilCloudDownload} className="me-1" /> Excel
+              </CButton>
+              <CButton color="secondary" variant="outline" onClick={() => openExport('pdf')} disabled={exporting || loading}>
+                <CIcon icon={cilCloudDownload} className="me-1" /> PDF
+              </CButton>
+            </>
+          )}
+          <GridColumnPicker
+            storageKey={columnsStorageKey}
+            columns={columns}
+            value={visibleColumns}
+            onChange={setVisibleColumns}
+          />
+        </div>
       </CCardHeader>
       <CCardBody>
         <CRow className="g-2 mb-3">
-          <CCol md={6}>
+          <CCol md={3}>
             <CFormInput
               placeholder="Buscar: acción, descripción, username, email"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </CCol>
-          <CCol md={4}>
+          <CCol md={3}>
             <CFormSelect value={actionType} onChange={(e) => setActionType(e.target.value)}>
               <option value="">Todas las acciones</option>
               {actionTypes.map((t) => (
@@ -121,9 +233,34 @@ const AuditLogsManagement = () => {
               ))}
             </CFormSelect>
           </CCol>
-          <CCol md={2} className="d-grid">
-            <CButton color="secondary" variant="outline" onClick={() => load({ resetPage: true })} disabled={loading}>
+          <CCol md={2} className="d-flex gap-2">
+            <CButton
+              className="flex-grow-1"
+              color="secondary"
+              variant="outline"
+              onClick={() => load({ resetPage: true })}
+              disabled={loading}
+            >
               {loading ? 'Buscando...' : 'Buscar'}
+            </CButton>
+            <CButton
+              className="flex-grow-1"
+              color="secondary"
+              variant="outline"
+              onClick={() => {
+                setQ('')
+                setActionType('')
+                setPage(1)
+                load({
+                  resetPage: true,
+                  qOverride: '',
+                  actionTypeOverride: '',
+                  pageOverride: 1,
+                }).catch(() => {})
+              }}
+              disabled={loading}
+            >
+              Todo
             </CButton>
           </CCol>
         </CRow>
@@ -165,41 +302,27 @@ const AuditLogsManagement = () => {
           </CTable>
         </div>
 
-        <div className="d-flex justify-content-between align-items-center mt-3">
-          <div className="text-body-secondary">
-            Total: {total} · Página {page} / {totalPages}
-          </div>
-          <div className="d-flex gap-2 align-items-center">
-            <CFormSelect
-              size="sm"
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value))
-                setPage(1)
-              }}
-              style={{ width: 110 }}
-            >
-              {[10, 20, 30, 50, 100].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </CFormSelect>
-            <CButton size="sm" color="secondary" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              Prev
-            </CButton>
-            <CButton
-              size="sm"
-              color="secondary"
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
-            >
-              Next
-            </CButton>
-          </div>
-        </div>
+        <GridPaginationBar
+          total={total}
+          page={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          disabled={loading}
+          onPageChange={setPage}
+          onPageSizeChange={(next) => {
+            setPageSize(Number(next))
+            setPage(1)
+          }}
+        />
       </CCardBody>
+
+      <ExportModal
+        visible={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onConfirm={confirmExport}
+        submitting={exporting}
+        format={exportFormat}
+      />
     </CCard>
   )
 }

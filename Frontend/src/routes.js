@@ -72,6 +72,10 @@ const UserManagement = React.lazy(() => import('./views/admin/users/UserManageme
 const RolesManagement = React.lazy(() => import('./views/admin/roles/RolesManagement'))
 const AuditLogsManagement = React.lazy(() => import('./views/admin/audit/AuditLogsManagement'))
 
+// Profile
+const MyProfile = React.lazy(() => import('./views/profile/MyProfile'))
+const ChangePassword = React.lazy(() => import('./views/profile/ChangePassword'))
+
 /**
  * Array of route configuration objects
  *
@@ -138,6 +142,8 @@ const routes = [
   { path: '/admin/users', name: 'User Management', element: UserManagement },
   { path: '/admin/roles', name: 'Roles', element: RolesManagement },
   { path: '/admin/audit', name: 'Audit Logs', element: AuditLogsManagement },
+  { path: '/profile', name: 'My Profile', element: MyProfile },
+  { path: '/profile/change-password', name: 'Change Password', element: ChangePassword },
 ]
 
 export default routes

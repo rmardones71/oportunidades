@@ -11,10 +11,7 @@ import {
   CDropdownMenu,
   CDropdownToggle,
 } from '@coreui/react'
-import {
-  cilLockLocked,
-  cilUser,
-} from '@coreui/icons'
+import { cilAccountLogout, cilLockLocked, cilUser } from '@coreui/icons'
 import CIcon from '@coreui/icons-react'
 
 import avatar8 from './../../assets/images/avatars/8.jpg'
@@ -28,6 +25,9 @@ const AppHeaderDropdown = () => {
   const user = useSelector((s) => s.auth.user)
   const refreshToken = useSelector((s) => s.auth.refreshToken)
   const toast = useToast()
+
+  const displayName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.username || 'Usuario'
 
   const doLogout = async () => {
     try {
@@ -43,24 +43,38 @@ const AppHeaderDropdown = () => {
 
   return (
     <CDropdown variant="nav-item">
-      <CDropdownToggle placement="bottom-end" className="py-0 pe-0" caret={false}>
+      <CDropdownToggle placement="bottom-end" className="py-0 pe-0 d-flex align-items-center" caret={false}>
+        <span className="d-none d-md-inline me-2">{displayName}</span>
         <CAvatar src={avatar8} size="md" />
       </CDropdownToggle>
       <CDropdownMenu className="pt-0" placement="bottom-end">
         <CDropdownHeader className="bg-body-secondary fw-semibold mb-2">Cuenta</CDropdownHeader>
-        <CDropdownItem disabled>
+        <CDropdownItem disabled className="align-items-start">
+          <CIcon icon={cilUser} className="me-2 mt-1" />
+          <div className="d-flex flex-column">
+            <div className="d-flex align-items-center flex-wrap gap-2">
+              <span>{displayName}</span>
+              {user?.role && <CBadge color="secondary">{user.role}</CBadge>}
+            </div>
+            {user?.username && displayName !== user.username && (
+              <div className="text-body-secondary small">{user.username}</div>
+            )}
+            {user?.email && <div className="text-body-secondary small">{user.email}</div>}
+          </div>
+        </CDropdownItem>
+        <CDropdownDivider />
+        <CDropdownItem as="button" type="button" onClick={() => navigate('/profile')}>
           <CIcon icon={cilUser} className="me-2" />
-          {user?.username || 'Usuario'}
-          {user?.role && (
-            <CBadge color="secondary" className="ms-2">
-              {user.role}
-            </CBadge>
-          )}
+          Mis datos personales
+        </CDropdownItem>
+        <CDropdownItem as="button" type="button" onClick={() => navigate('/profile/change-password')}>
+          <CIcon icon={cilLockLocked} className="me-2" />
+          Cambiar contraseña
         </CDropdownItem>
         <CDropdownDivider />
         <CDropdownItem as="button" type="button" onClick={doLogout}>
-          <CIcon icon={cilLockLocked} className="me-2" />
-          Cerrar sesión
+          <CIcon icon={cilAccountLogout} className="me-2" />
+          Salir
         </CDropdownItem>
       </CDropdownMenu>
     </CDropdown>

@@ -21,10 +21,14 @@ import {
   CTableRow,
 } from '@coreui/react'
 import CIcon from '@coreui/icons-react'
-import { cilCheckCircle, cilPencil, cilXCircle } from '@coreui/icons'
+import { cilCheckCircle, cilCloudDownload, cilPencil, cilXCircle, cilPeople } from '@coreui/icons'
 import api from 'src/services/api'
 import UserFormModal from './UserFormModal'
 import { useToast } from 'src/components/ToastProvider'
+import { buildDateRangeParams, exportToPdf, exportToXlsx, isPrivilegedRole } from 'src/utils/export'
+import { useSelector } from 'react-redux'
+import ExportModal from 'src/components/ExportModal'
+import GridPaginationBar from 'src/components/GridPaginationBar'
 
 const UserManagement = () => {
   const toast = useToast()
@@ -64,8 +68,13 @@ const UserManagement = () => {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportFormat, setExportFormat] = useState('xlsx')
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize])
+  const userRole = useSelector((s) => s.auth.user?.role)
+  const canExport = isPrivilegedRole(userRole)
 
   const columns = useMemo(
     () => [
@@ -85,6 +94,16 @@ const UserManagement = () => {
     [],
   )
 
+  const getRolePillClass = (roleName) => {
+    const normalized = String(roleName || '')
+      .trim()
+      .toLowerCase()
+
+    if (normalized === 'admin') return 'bg-warning-subtle text-dark fw-semibold'
+    if (normalized === 'super admin' || normalized === 'superadmin') return 'bg-success-subtle text-dark fw-semibold'
+    return 'bg-info-subtle text-dark fw-semibold'
+  }
+
   const setColumnVisible = (key, value) => {
     setVisibleColumns((prev) => {
       const next = { ...prev, [key]: value }
@@ -102,10 +121,13 @@ const UserManagement = () => {
     setRoles(res.data)
   }
 
-  const load = async () => {
+  const load = async ({ qOverride, roleOverride, pageOverride } = {}) => {
     setLoading(true)
     try {
-      const res = await api.get('/api/users', { params: { page, pageSize, q, role } })
+      const effectivePage = pageOverride ?? page
+      const res = await api.get('/api/users', {
+        params: { page: effectivePage, pageSize, q: qOverride ?? q, role: roleOverride ?? role },
+      })
       setItems(res.data.items)
       setTotal(res.data.total)
     } catch (e) {
@@ -126,7 +148,91 @@ const UserManagement = () => {
 
   const onSearch = () => {
     setPage(1)
-    load().catch(() => {})
+    load({ pageOverride: 1 }).catch(() => {})
+  }
+
+  const fetchAllUsers = async ({ dateFromOverride, dateToOverride, allRecords } = {}) => {
+    const pageSizeAll = 100
+    const dateParams = allRecords
+      ? {}
+      : buildDateRangeParams({ dateFrom: dateFromOverride, dateTo: dateToOverride })
+    const all = []
+    let pageAll = 1
+    while (true) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await api.get('/api/users', {
+        params: { page: pageAll, pageSize: pageSizeAll, q, role, ...dateParams },
+      })
+      const batch = res.data.items || []
+      all.push(...batch)
+      if (all.length >= Number(res.data.total || 0) || batch.length < pageSizeAll) break
+      pageAll += 1
+    }
+    return all
+  }
+
+  const exportExcel = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    setExporting(true)
+    try {
+      const all = await fetchAllUsers({ allRecords, dateFromOverride, dateToOverride })
+      const rows = all.map((u) => ({
+        ID: u.UserId,
+        Username: u.Username,
+        Email: u.Email,
+        Nombre: u.FirstName || '',
+        Apellido: u.LastName || '',
+        Telefono: u.Phone || '',
+        Rol: u.Role || '',
+        Activo: u.IsActive ? 'Si' : 'No',
+        '2FA': u.TwoFactorEnabled ? 'Si' : 'No',
+        'Ultimo Login': u.LastLogin ? new Date(u.LastLogin).toLocaleString() : '',
+        Creado: u.CreatedAt ? new Date(u.CreatedAt).toLocaleString() : '',
+      }))
+      const dateTag = new Date().toISOString().slice(0, 10)
+      await exportToXlsx({ fileName: `usuarios_${dateTag}.xlsx`, sheetName: 'Usuarios', rows })
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const exportPdf = async ({ allRecords, dateFromOverride, dateToOverride } = {}) => {
+    setExporting(true)
+    try {
+      const all = await fetchAllUsers({ allRecords, dateFromOverride, dateToOverride })
+      const head = ['ID', 'Username', 'Email', 'Rol', 'Activo', '2FA', 'Creado']
+      const body = all.map((u) => [
+        String(u.UserId ?? ''),
+        u.Username || '',
+        u.Email || '',
+        u.Role || '',
+        u.IsActive ? 'Si' : 'No',
+        u.TwoFactorEnabled ? 'Si' : 'No',
+        u.CreatedAt ? new Date(u.CreatedAt).toLocaleString() : '',
+      ])
+      const dateTag = new Date().toISOString().slice(0, 10)
+      await exportToPdf({ fileName: `usuarios_${dateTag}.pdf`, title: 'Usuarios', head, body })
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const openExport = (format) => {
+    if (!canExport) return
+    setExportFormat(format)
+    setExportModalOpen(true)
+  }
+
+  const confirmExport = async ({ allRecords, dateFrom, dateTo, format }) => {
+    if (format === 'pdf') {
+      await exportPdf({ allRecords, dateFromOverride: dateFrom, dateToOverride: dateTo })
+    } else {
+      await exportExcel({ allRecords, dateFromOverride: dateFrom, dateToOverride: dateTo })
+    }
+    setExportModalOpen(false)
   }
 
   const openCreate = () => {
@@ -205,10 +311,13 @@ const UserManagement = () => {
   }
 
   return (
-    <CCard>
-      <CCardHeader className="d-flex justify-content-between align-items-center">
-        <div>Gestión de usuarios</div>
-        <div className="d-flex gap-2">
+      <CCard>
+        <CCardHeader className="d-flex justify-content-between align-items-center">
+          <div className="d-flex align-items-center">
+            <CIcon icon={cilPeople} className="me-2" />
+            <span>Gestión de usuarios</span>
+          </div>
+          <div className="d-flex gap-2">
           <CDropdown>
             <CDropdownToggle color="secondary" variant="outline">
               Filtrar Columnas
@@ -227,6 +336,16 @@ const UserManagement = () => {
                 ))}
             </CDropdownMenu>
           </CDropdown>
+          {canExport && (
+            <>
+              <CButton color="secondary" variant="outline" onClick={() => openExport('xlsx')} disabled={exporting || loading}>
+                <CIcon icon={cilCloudDownload} className="me-1" /> Excel
+              </CButton>
+              <CButton color="secondary" variant="outline" onClick={() => openExport('pdf')} disabled={exporting || loading}>
+                <CIcon icon={cilCloudDownload} className="me-1" /> PDF
+              </CButton>
+            </>
+          )}
           <CButton color="primary" onClick={openCreate}>
             Nuevo
           </CButton>
@@ -234,7 +353,7 @@ const UserManagement = () => {
       </CCardHeader>
       <CCardBody>
         <CRow className="g-2 mb-3">
-          <CCol md={6}>
+          <CCol md={4}>
             <CFormInput
               placeholder="Buscar: username, email, nombre, apellido"
               value={q}
@@ -251,9 +370,23 @@ const UserManagement = () => {
               ))}
             </CFormSelect>
           </CCol>
-          <CCol md={3} className="d-grid">
-            <CButton color="secondary" variant="outline" onClick={onSearch} disabled={loading}>
+          <CCol md={5} className="d-flex gap-2">
+            <CButton className="flex-grow-1" color="secondary" variant="outline" onClick={onSearch} disabled={loading}>
               {loading ? 'Buscando...' : 'Buscar'}
+            </CButton>
+            <CButton
+              className="flex-grow-1"
+              color="secondary"
+              variant="outline"
+              onClick={() => {
+                setRole('')
+                setQ('')
+                setPage(1)
+                load({ pageOverride: 1, qOverride: '', roleOverride: '' }).catch(() => {})
+              }}
+              disabled={loading}
+            >
+              Todo
             </CButton>
           </CCol>
         </CRow>
@@ -277,7 +410,16 @@ const UserManagement = () => {
                   {visibleColumns.firstName && <CTableDataCell>{u.FirstName || '-'}</CTableDataCell>}
                   {visibleColumns.lastName && <CTableDataCell>{u.LastName || '-'}</CTableDataCell>}
                   {visibleColumns.phone && <CTableDataCell>{u.Phone || '-'}</CTableDataCell>}
-                  {visibleColumns.role && <CTableDataCell>{u.Role}</CTableDataCell>}
+                  {visibleColumns.role && (
+                    <CTableDataCell>
+                      <span
+                        className={`d-inline-block px-2 py-1 ${getRolePillClass(u.Role)}`}
+                        style={{ borderRadius: '20%' }}
+                      >
+                        {u.Role || '-'}
+                      </span>
+                    </CTableDataCell>
+                  )}
                   {visibleColumns.isActive && (
                     <CTableDataCell>{u.IsActive ? 'Activo' : 'Inactivo'}</CTableDataCell>
                   )}
@@ -328,40 +470,18 @@ const UserManagement = () => {
           </CTable>
         </div>
 
-        <div className="d-flex justify-content-between align-items-center mt-3">
-          <div className="text-body-secondary">
-            Total: {total} · Página {page} / {totalPages}
-          </div>
-          <div className="d-flex gap-2 align-items-center">
-            <CFormSelect
-              size="sm"
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value))
-                setPage(1)
-              }}
-              style={{ width: 110 }}
-            >
-              {[10, 20, 30, 50, 100].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </CFormSelect>
-            <CButton size="sm" color="secondary" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              Prev
-            </CButton>
-            <CButton
-              size="sm"
-              color="secondary"
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
-            >
-              Next
-            </CButton>
-          </div>
-        </div>
+        <GridPaginationBar
+          total={total}
+          page={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          disabled={loading}
+          onPageChange={setPage}
+          onPageSizeChange={(next) => {
+            setPageSize(next)
+            setPage(1)
+          }}
+        />
       </CCardBody>
 
       <UserFormModal
@@ -371,6 +491,14 @@ const UserManagement = () => {
         roles={roles}
         initialValues={editing}
         submitting={saving}
+      />
+
+      <ExportModal
+        visible={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onConfirm={confirmExport}
+        submitting={exporting}
+        format={exportFormat}
       />
     </CCard>
   )

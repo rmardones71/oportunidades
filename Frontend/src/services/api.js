@@ -2,8 +2,15 @@ import axios from 'axios'
 import store from '../store'
 import { setAccessToken, clearSession } from '../store/authSlice'
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000',
+  baseURL: apiBaseUrl,
+})
+
+// Separate client without interceptors to avoid refresh deadlocks
+const refreshApi = axios.create({
+  baseURL: apiBaseUrl,
 })
 
 api.interceptors.request.use((config) => {
@@ -25,6 +32,12 @@ api.interceptors.response.use(
 
     if (status !== 401 || original?._retry) throw error
 
+    // If refreshing itself fails with 401, don't try to refresh again
+    if (original?.url?.includes('/api/auth/refresh-token')) {
+      store.dispatch(clearSession())
+      throw error
+    }
+
     const refreshToken = store.getState().auth.refreshToken
     if (!refreshToken) {
       store.dispatch(clearSession())
@@ -34,7 +47,7 @@ api.interceptors.response.use(
     original._retry = true
 
     if (!refreshPromise) {
-      refreshPromise = api
+      refreshPromise = refreshApi
         .post('/api/auth/refresh-token', { refreshToken })
         .then((res) => {
           store.dispatch(setAccessToken(res.data.accessToken))
@@ -57,4 +70,3 @@ api.interceptors.response.use(
 )
 
 export default api
-

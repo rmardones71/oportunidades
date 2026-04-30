@@ -9,6 +9,8 @@ async function listUsers(req, res) {
   const pageSize = Math.min(100, Math.max(10, Number(req.query.pageSize || 20)))
   const q = String(req.query.q || '').trim()
   const role = String(req.query.role || '').trim()
+  const dateFrom = req.query.dateFrom ? new Date(String(req.query.dateFrom)) : null
+  const dateTo = req.query.dateTo ? new Date(String(req.query.dateTo)) : null
 
   const offset = (page - 1) * pageSize
 
@@ -23,6 +25,14 @@ async function listUsers(req, res) {
   if (role) {
     where.push(`r.RoleName = @role`)
     params.role = role
+  }
+  if (dateFrom && !Number.isNaN(dateFrom.getTime())) {
+    where.push(`u.CreatedAt >= @dateFrom`)
+    params.dateFrom = dateFrom
+  }
+  if (dateTo && !Number.isNaN(dateTo.getTime())) {
+    where.push(`u.CreatedAt <= @dateTo`)
+    params.dateTo = dateTo
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -156,5 +166,82 @@ async function toggleStatus(req, res) {
   return res.json({ message: 'OK' })
 }
 
-module.exports = { listUsers, getUser, createUser, updateUser, deleteUser, toggle2fa, toggleStatus }
+async function getMe(req, res) {
+  const userId = req.user.sub
+  const result = await query(
+    `
+    SELECT TOP 1
+      u.UserId, u.Username, u.Email, u.FirstName, u.LastName,
+      r.RoleName AS Role,
+      u.IsActive, u.TwoFactorEnabled, u.LastLogin, u.CreatedAt
+    FROM dbo.Users u
+    INNER JOIN dbo.Roles r ON r.RoleId = u.RoleId
+    WHERE u.UserId = @userId
+    `,
+    { userId },
+  )
+  const user = result.recordset[0]
+  if (!user) return res.status(404).json({ message: 'User not found' })
+  return res.json({
+    userId: user.UserId,
+    username: user.Username,
+    email: user.Email,
+    firstName: user.FirstName,
+    lastName: user.LastName,
+    role: user.Role,
+    twoFactorEnabled: !!user.TwoFactorEnabled,
+    lastLogin: user.LastLogin,
+    createdAt: user.CreatedAt,
+  })
+}
 
+async function updateMe(req, res) {
+  const errors = validationResult(req)
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() })
+
+  const ipAddress = req.ip
+  const userId = req.user.sub
+  const { email, firstName, lastName } = req.body
+
+  await query(
+    `
+    UPDATE dbo.Users
+    SET Email=@email, FirstName=@firstName, LastName=@lastName
+    WHERE UserId=@userId
+    `,
+    { userId, email, firstName: firstName ?? null, lastName: lastName ?? null },
+  )
+
+  await auditLog({ userId, actionType: 'USERS_UPDATE_SELF', description: 'Updated own profile', ipAddress })
+
+  const result = await query(
+    `
+    SELECT TOP 1
+      u.UserId, u.Username, u.Email, u.FirstName, u.LastName,
+      r.RoleName AS Role,
+      u.TempPassword, u.TwoFactorEnabled
+    FROM dbo.Users u
+    INNER JOIN dbo.Roles r ON r.RoleId = u.RoleId
+    WHERE u.UserId = @userId
+    `,
+    { userId },
+  )
+  const user = result.recordset[0]
+  if (!user) return res.status(404).json({ message: 'User not found' })
+
+  return res.json({
+    message: 'Updated',
+    user: {
+      userId: user.UserId,
+      username: user.Username,
+      email: user.Email,
+      firstName: user.FirstName,
+      lastName: user.LastName,
+      role: user.Role,
+      tempPassword: !!user.TempPassword,
+      twoFactorEnabled: !!user.TwoFactorEnabled,
+    },
+  })
+}
+
+module.exports = { listUsers, getUser, createUser, updateUser, deleteUser, toggle2fa, toggleStatus, getMe, updateMe }

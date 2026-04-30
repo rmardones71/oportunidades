@@ -12,7 +12,7 @@ const { parseSqlServerError } = require('./utils/sqlErrors')
 
 const app = express()
 
-app.set('trust proxy', true)
+app.set('trust proxy', env.trustProxy)
 
 app.use(helmet())
 app.use(

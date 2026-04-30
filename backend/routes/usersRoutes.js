@@ -7,8 +7,21 @@ const { asyncHandler } = require('../utils/asyncHandler')
 
 const router = express.Router()
 
+router.get('/me', authRequired, asyncHandler(controller.getMe))
+
 router.get('/', authRequired, requireRoles('Super Admin', 'Admin'), asyncHandler(controller.listUsers))
 router.get('/:id', authRequired, requireRoles('Super Admin', 'Admin'), asyncHandler(controller.getUser))
+
+router.put(
+  '/me',
+  authRequired,
+  [
+    body('email').isEmail().normalizeEmail(),
+    body('firstName').optional({ nullable: true }).isString().trim(),
+    body('lastName').optional({ nullable: true }).isString().trim(),
+  ],
+  asyncHandler(controller.updateMe),
+)
 
 router.post(
   '/',
